@@ -46,24 +46,6 @@ def get_nearest_size_divisible_by_16(dim: int) -> int:
     return int(np.ceil(dim / 16.0)) * 16
 
 
-def aligned_array(shape, dtype=np.uint8, align=16):
-    """Creates an ndarray that is aligned to a specified number of bytes.
-
-    Parameters:
-        shape (tuple): Shape of the desired array.
-        dtype (data-type): Desired data type.
-        align (int): Byte-alignment value.
-
-    Returns:
-        ndarray: Aligned array.
-    """
-    n = np.prod(shape) * np.dtype(dtype).itemsize
-    empty = np.empty(n + align, dtype=np.uint8)
-    data_align = empty.ctypes.data % align
-    offset = 0 if data_align == 0 else (align - data_align)
-    return empty[offset:offset + n].view(dtype).reshape(shape)
-
-
 def draw_pixel_on_canvas(canvas: np.ndarray, x: int, y: int, color: str, scale_factor: int) -> np.ndarray:
     """Draw a pixel on the given canvas using the specified color.
 
@@ -104,22 +86,19 @@ def render_timelapse_frames(output_path: str,
     upscale_width = get_nearest_size_divisible_by_16(upscale_width)
     upscale_height = get_nearest_size_divisible_by_16(upscale_height)
 
-    canvas = aligned_array((upscale_height, upscale_width, 3), dtype=np.uint8)
+    canvas = np.zeros((upscale_height, upscale_width, 3), dtype=np.uint8)
 
     num_frames = len(events)
     events_per_frame = num_frames // (settings.desired_duration * settings.frame_rate)
     if events_per_frame == 0:
         return
 
-    frames = []
+    with imageio.get_writer(output_path, fps=settings.frame_rate, codec='libx264', quality=7,
+                            ffmpeg_params=['-profile:v', 'high', '-tune', 'animation', '-crf', '20']) as writer:
+        for i, (x, y, color_index) in enumerate(events):
+            color = palette[color_index]
+            canvas = draw_pixel_on_canvas(canvas, x, y, color, settings.scale_factor)
 
-    for i, (x, y, color_index) in enumerate(events):
-        color = palette[color_index]
-        canvas = draw_pixel_on_canvas(canvas, x, y, color, settings.scale_factor)
+            if i % events_per_frame == 0:
+                writer.append_data(canvas)
 
-        if i % events_per_frame == 0:
-            frames.append(canvas.copy())
-
-    with imageio.get_writer(output_path, fps=settings.frame_rate, codec='libx264', quality=9) as writer:
-        for frame in frames:
-            writer.append_data(frame)
