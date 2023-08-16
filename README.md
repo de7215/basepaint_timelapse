@@ -9,14 +9,15 @@ Dependencies:
 
 - requests: For making API requests.
 - web3: To interact with the Ethereum network.
-- cv2: (OpenCV) For video generation.
+- cv2 (OpenCV): For video generation.
 - numpy: To handle image arrays.
+- imageio and imageio[ffmpeg]: For handling video frame writing and ensuring compatibility with various codecs.
 - dotenv (Optional): For loading environment variables from a .env file.
 
 Install them using pip:
 
 ```bash
-pip install requests web3 opencv-python numpy python-dotenv
+pip install requests web3 opencv-python numpy python-dotenv imageio imageio[ffmpeg]
 ```
 Note: If you don't want to use the dotenv package, you can skip its installation, but it is recommended for handling sensitive data like API keys securely.
 
