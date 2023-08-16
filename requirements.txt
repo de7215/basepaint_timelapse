@@ -1,0 +1,5 @@
+requests
+web3
+opencv-python
+numpy
+python-dotenv
