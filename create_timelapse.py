@@ -1,5 +1,8 @@
 import json
 import os
+import pickle
+import sys
+
 from collections import defaultdict
 from typing import Optional
 
@@ -30,7 +33,10 @@ def load_contract_abi(use_latest: bool = False) -> dict:
     if use_latest:
         return extract_contract_abi(CONTRACT_ADDRESS)
     else:
-        with open('resources/contract_abi.json', 'r') as f:
+        script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        path_to_abi = os.path.join(script_dir, 'resources', 'contract_abi.json')
+
+        with open(path_to_abi, 'r') as f:
             return json.load(f)
 
 
@@ -48,21 +54,43 @@ def retrieve_contract_paint_events(w3: Web3, contract: Contract, latest_block: i
     """
     Fetch painted events from the contract.
     """
+    CACHE_DIR = ".cache"
+    CACHE_FILE = "paint_events_cache.pkl"
+
     day2paint_events = defaultdict(list)
-    day2datetime = {}
-    for i in range(CONTRACT_CREATION_BLOCK, latest_block, EVENT_LOG_MAX_BLOCKS_INTERVAL):
+    day2block = {}
+    start_from_block = CONTRACT_CREATION_BLOCK
+
+    # Check if there is a cache at cwd/.cache
+    cache_path = os.path.join(CACHE_DIR, CACHE_FILE)
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            day2paint_events, day2block = pickle.load(f)
+            start_from_block = max(day2block.values()) + 1  # +1 to start from the next block
+
+    for i in range(start_from_block, latest_block, EVENT_LOG_MAX_BLOCKS_INTERVAL):
         try:
             painted_events = contract.events.Painted.get_logs(fromBlock=i, toBlock=i + EVENT_LOG_MAX_BLOCKS_INTERVAL)
         except ValueError:
             raise Exception("Update EVENT_LOG_MAX_BLOCKS_INTERVAL constant")
+
         for event in painted_events:
-            if event.args.day not in day2datetime:
+            if event.args.day not in day2block:
                 block_data = w3.eth.get_block(event.blockNumber)
-                day2datetime[event.args.day] = datetime.utcfromtimestamp(block_data['timestamp'])
+                day2block[event.args.day] = block_data['timestamp']
             pixels = event.args.pixels
             for x, y, color_index in zip(pixels[0::3], pixels[1::3], pixels[2::3]):
                 day2paint_events[event.args.day].append((x, y, color_index))
-    return day2paint_events, day2datetime
+
+    try:
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+        with open(cache_path, "wb") as f:
+            pickle.dump((day2paint_events, day2block), f)
+    except (PermissionError, FileExistsError, OSError):
+        pass
+
+    return day2paint_events, day2block
 
 
 def connect_to_web3(provider_url: str) -> Web3:
@@ -75,10 +103,10 @@ def connect_to_web3(provider_url: str) -> Web3:
 
 def generate_timelapse_video(output_path: str,
                              day_number: int,
-                             day2datetime: dict,
+                             day2block: dict,
                              painted_events: dict,
                              timelapse_settings: TimelapseSettings):
-    timestamp = day2datetime.get(day_number)
+    timestamp = datetime.utcfromtimestamp(day2block.get(day_number))
     formatted_timestamp = timestamp.strftime('%Y-%m-%d') if timestamp else "UNKNOWN_DATE"
 
     palette, theme = retrieve_day_theme_and_palette(day_number)
@@ -95,14 +123,14 @@ def main(output_path: str, day_number: Optional[int], timelapse_settings: Timela
     abi = load_contract_abi()
     contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=abi)
     latest_block = w3.eth.get_block('latest')['number']
-    painted_events, day2datetime = retrieve_contract_paint_events(w3, contract, latest_block)
+    painted_events, day2block = retrieve_contract_paint_events(w3, contract, latest_block)
     if day_number is None:
         # get the day number from contract and loop through each day
         day_number = contract.functions.today().call()
         for i in range(1, day_number + 1):
-            generate_timelapse_video(output_path, i, day2datetime, painted_events, timelapse_settings)
+            generate_timelapse_video(output_path, i, day2block, painted_events, timelapse_settings)
     else:
-        generate_timelapse_video(output_path, day_number, day2datetime, painted_events, timelapse_settings)
+        generate_timelapse_video(output_path, day_number, day2block, painted_events, timelapse_settings)
 
 
 if __name__ == "__main__":
